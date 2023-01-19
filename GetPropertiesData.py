@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Fri Jan 19 10:33:00 2023
+Created on Fri Jan 13 10:33:00 2023
 
 @author: perna
 """
@@ -11,9 +11,11 @@ import pandas as pd
 from datetime import datetime, timedelta
 import re
 
+# stringAddress = "City, State - Neighborhood"
 # stringAddress = "Ribeirão Preto, SP"
 # stringAddress = "São José dos Campos, SP - Jardim Aquários"
-def GetPropertiesData(stringAddress, size = 250, verbose = False, Neighborhood = True):
+def GetPropertiesData(stringAddress, size = 250, verbose = False):
+    Neighborhood = " - " in stringAddress
     RequestsSession = requests.Session()
     AddressDictionary = GetAddressDictionary(RequestsSession, stringAddress, verbose = verbose, Neighborhood = Neighborhood)
     properties = GetProperties(RequestsSession,AddressDictionary, size = size, verbose = verbose)
