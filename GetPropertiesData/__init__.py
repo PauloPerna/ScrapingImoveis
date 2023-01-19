@@ -6,37 +6,68 @@ Created on Fri Jan 13 10:33:00 2023
 @author: perna
 """
 import requests
-import urllib
 import pandas as pd
 from datetime import datetime, timedelta
 import re
 
-# stringAddress = "City, State - Neighborhood"
-# stringAddress = "Ribeirão Preto, SP"
-# stringAddress = "São José dos Campos, SP - Jardim Aquários"
-def GetPropertiesData(stringAddress, size = 250, verbose = False):
-    Neighborhood = " - " in stringAddress
+def GetPropertiesData(state, city, neighborhood = "", size = 250, verbose = False):
+    """
+    GetPropertiesData: Get data from properties in an address directly related to stringAddress
+ 
+    Parameters
+    ----------
+    state : str
+        State to search    
+    city : str
+        City to search    
+    neighborhood : str
+        Neighborhood to search    
+    size : int
+        Number of observations to get, values bigger than 300 can lead to an error
+    verbose : bool
+        Should verbose?
+    
+    Returns
+    -------
+    dfProperties : pandas.DataFrame
+        pandas.DataFrame with `size` number of properties with the following columns
+            'link' : str, property's url,
+            'preco' : int, property's price,
+            'metragem' : int, property's area,
+            'estado' : str, state's name,
+            'cidade' : str, city's name,
+            'bairro' : str, neighborhood's name,
+            'rua' : str, street's name,
+            'numero' : int, number address,
+            'geo_point' : str, geolocation,
+            'quartos' : int, property's number of bedrooms,
+            'banheiros' : int, property's number of bathrooms,
+            'vagas' : int, property's number of parking
+    """
+    hasNeighborhood = neighborhood != ""
+    stringAddress = city + ", " + state + " - " + neighborhood if hasNeighborhood else city + ", " + state
     RequestsSession = requests.Session()
-    AddressDictionary = GetAddressDictionary(RequestsSession, stringAddress, verbose = verbose, Neighborhood = Neighborhood)
+    AddressDictionary = GetAddressDictionary(RequestsSession, stringAddress, verbose = verbose, hasNeighborhood = hasNeighborhood)
     properties = GetProperties(RequestsSession,AddressDictionary, size = size, verbose = verbose)
-    return GetDataFrame(properties)
+    dfProperties = GetDataFrame(properties)
+    return dfProperties
 
-def GetAddressDictionary(RequestsSession, stringAddress, verbose = False, Neighborhood = True):
+def GetAddressDictionary(RequestsSession, stringAddress, verbose = False, hasNeighborhood = True):
     AddressDictionary = ""
-    if Neighborhood:
-        AddressDictionary = GetAddressNeighborhood(RequestsSession, stringAddress, verbose = False, Neighborhood = True)
+    if hasNeighborhood:
+        AddressDictionary = GetAddressNeighborhood(RequestsSession, stringAddress, verbose = verbose)
     if type(AddressDictionary) == str:
-        AddressDictionary = GetAddressCity(RequestsSession, stringAddress, verbose = False, Neighborhood = True)
+        AddressDictionary = GetAddressCity(RequestsSession, stringAddress, verbose = verbose)
     return AddressDictionary
 
-def GetAddressNeighborhood(RequestsSession, stringAddress, verbose = False, Neighborhood = True):
-    response = AddressRequest(RequestsSession, stringAddress)
+def GetAddressNeighborhood(RequestsSession, stringAddress, verbose = False):
+    response = AddressRequest(RequestsSession, stringAddress, verbose = verbose)
     AddressDictionaryNeighborhood = GetDataIfExists(response, ['neighborhood','result','locations',0,'address'])
     return AddressDictionaryNeighborhood 
 
-def GetAddressCity(RequestsSession, stringAddress, verbose = False, Neighborhood = True):
+def GetAddressCity(RequestsSession, stringAddress, verbose = False):
     stringAddress = re.split(" - ",stringAddress)[0]
-    response = AddressRequest(RequestsSession, stringAddress)
+    response = AddressRequest(RequestsSession, stringAddress, verbose = verbose)
     AddressDictionaryCity = GetDataIfExists(response, ['city','result','locations',0,'address'])
     return AddressDictionaryCity 
 
@@ -56,12 +87,7 @@ def AddressRequest(RequestsSession, stringAddress, verbose = False):
         "Upgrade-Insecure-Requests" : r'1',
         "User-Agent" : r'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0'
         }
-    request = RequestsSession.request('OPTIONS',
-                  r'https://glue-api.vivareal.com/v3/locations',
-                  headers=headers)
-    if verbose:
-        print("First request:")
-        print(request)        
+    response = OptionsRequest(RequestsSession, headers, r'https://glue-api.vivareal.com/v3/locations', verbose = verbose)
     params = {
         'portal': 'VIVAREAL',
         'fields': 'neighborhood,city,account,condominium,poi,street',
@@ -79,16 +105,31 @@ def AddressRequest(RequestsSession, stringAddress, verbose = False):
         '__vt': '',
         }
     url = 'https://glue-api.vivareal.com/v3/locations'
-    request = RequestsSession.request(r'GET',
+    response = GetRequest(RequestsSession, headers, params, url)
+    jsonResponse = response.json()
+    return jsonResponse
+
+def OptionsRequest(RequestsSession, headers, url, verbose = False):
+    response = RequestsSession.request('OPTIONS',
+                  url,
+                  headers=headers)
+    if verbose:
+        print("Options request:")
+        print(response)
+    return response
+
+def GetRequest(RequestsSession, headers, params, url, verbose = False):
+    response = RequestsSession.request(r'GET',
                   url,
                   headers = headers,
                   params = params)
     if verbose:
-        print("Seccond request:")
-        print(request)      
-    return request.json()
+        print("Get request:")
+        print(response)
+    return response
 
 def GetDataIfExists(observation, path):
+    # TODO: Refactor
     # Iterate over path through observation
     # path may have a codition in the string form "[key,value]"
     # observation[path[0]][path[1]][path[2]]...
@@ -100,12 +141,12 @@ def GetDataIfExists(observation, path):
             value = item[1]
             filteredData = [i for i in list(data.items()) if name in i[1] and i[1][name] == value]
             if filteredData == []:
-                return 'data not found (debug: GetDataIfExists)'
+                return 'NA'
             data = filteredData[0][1]
         # this is a path
         else:
             if item not in data.keys():
-                return 'data not found (debug: GetDataIfExists)';
+                return 'NA'
             else:
                 data = data[item]
                 if(type(data) == list):
@@ -131,13 +172,10 @@ def GetProperties(RequestsSession, AddressDictionary,size=250, verbose = False):
                 'TE' : 'trailers',
                 'User-Agent' : 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0',
                 'x-domain' : 'www.vivareal.com.br'}
-    r = RequestsSession.request('OPTIONS',
-                  r'https://glue-api.vivareal.com/v2/listings',
-                  headers=headers)
+    response = OptionsRequest(RequestsSession, headers, r'https://glue-api.vivareal.com/v2/listings')
     if verbose:
         print("First request:")
-        print(r)
-    
+        print(response)
     # Input address parameters in params
     params = {
         'addressCity' : AddressDictionary['city'],
@@ -169,17 +207,17 @@ def GetProperties(RequestsSession, AddressDictionary,size=250, verbose = False):
         'pointRadius':'',	
         'isPOIQuery':''}
     url = r'https://glue-api.vivareal.com/v2/listings'
-    r = RequestsSession.request(r'GET',
+    response = RequestsSession.request(r'GET',
                   url,
                   params=params,
                   headers = headers)
     if verbose:
         print("Seccond request:")
-        print(r)
+        print(response)
         
     # TODO: tratar erro 400 quando tem menos imóveis do que size
     
-    properties = r.json()['search']['result']['listings']
+    properties = response.json()['search']['result']['listings']
     return properties
     
 def GetDataFrame(properties):
